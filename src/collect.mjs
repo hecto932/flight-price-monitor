@@ -92,21 +92,60 @@ function rotate(list, perRun, runIndex) {
   return Array.from({ length: per }, (_, k) => list[(offset + k) % n]);
 }
 
-function buildPlan(config, runIndex, today) {
+// Google Flights solo publica precios hasta cierto horizonte (~9-11 meses). Los tramos que
+// quedaron vacíos para TODAS las rutas se recuerdan en state.horizon y se saltan; cada
+// `horizonRecheckDays` se gasta UNA sola búsqueda para ver si ya hay datos ahí.
+function buildPlan(config, state, today) {
   const start = addDays(today, 1);
   const end = addMonths(today, config.windowMonths);
+  const cap = addDays(today, config.horizonDays ?? 366);
+  const queryEnd = cap < end ? cap : end;
   const chunks = [];
-  for (let s = start; s <= end; s = addDays(s, config.chunkDays)) {
+  for (let s = start; s <= queryEnd; s = addDays(s, config.chunkDays)) {
     const e = addDays(s, config.chunkDays - 1);
-    chunks.push([s, e < end ? e : end]);
+    chunks.push([s, e < queryEnd ? e : queryEnd]);
   }
+
+  const h = state.horizon;
+  const recheck = h && diffDays(h.checked_on, today) >= (config.horizonRecheckDays ?? 7);
+  const isEmptyZone = (from) => h && from >= h.empty_from;
+
   const jobs = [];
+  let skipped = 0;
+  let probeAdded = false;
   for (const route of config.routes) {
-    for (const nights of rotate(route.durations, route.durationsPerRun, runIndex)) {
-      for (const [from, to] of chunks) jobs.push({ route, nights, from, to });
+    for (const nights of rotate(route.durations, route.durationsPerRun, state.runIndex)) {
+      for (const [from, to] of chunks) {
+        if (isEmptyZone(from)) {
+          if (recheck && !probeAdded) {
+            jobs.push({ route, nights, from, to, horizonProbe: true });
+            probeAdded = true;
+          } else skipped++;
+          continue;
+        }
+        jobs.push({ route, nights, from, to });
+      }
     }
   }
-  return { window: { from: start, to: end }, chunks, jobs };
+  return { window: { from: start, to: end }, queryEnd, chunks, jobs, skipped };
+}
+
+// Actualiza state.horizon según lo que devolvió cada tramo en esta corrida.
+function nextHorizon(prev, calls, today) {
+  const byChunk = new Map();
+  for (const c of calls) {
+    if (c.error) continue;
+    if (!byChunk.has(c.from)) byChunk.set(c.from, []);
+    byChunk.get(c.from).push(c.days);
+  }
+  let horizon = prev ?? null;
+  for (const [from, days] of [...byChunk.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const empty = days.every((d) => d === 0);
+    if (empty && (!horizon || from < horizon.empty_from)) horizon = { empty_from: from, checked_on: today };
+    else if (empty && horizon && from >= horizon.empty_from) horizon = { ...horizon, checked_on: today };
+    else if (!empty && horizon && from >= horizon.empty_from) horizon = null; // ya hay datos: se reanuda
+  }
+  return horizon;
 }
 
 // ---------- SerpApi ----------
@@ -176,6 +215,7 @@ async function fetchCalendar(job, config, apiKey) {
 
 // Precios sintéticos para probar el pipeline sin gastar búsquedas.
 function mockCalendar(job) {
+  if (job.from >= addDays(todayHermosillo(), 275)) return []; // imita el horizonte de Google
   const base = job.route.id === 'HMO-MEX' ? 4200 : 23000;
   const rows = [];
   for (let d = job.from; d <= job.to; d = addDays(d, 1)) {
@@ -301,6 +341,7 @@ function summarizeRoute(route, quotes, window, today, config, prevRoute) {
     durations_configured: route.durations,
     durations_with_data: [...new Set(valid.map((x) => diffDays(x.out, x.ret)))].sort((a, b) => a - b),
     quotes: valid.length,
+    data_until: valid.reduce((m, q) => (q.out > m ? q.out : m), '') || null,
     year_stats: stats(valid.map((x) => x.price)),
     best_of_year: bestOfYear,
     months: [...months.entries()]
@@ -323,13 +364,16 @@ async function main() {
 
   const today = todayHermosillo();
   const state = await readJson(path.join(dataDir, 'state.json'), { runIndex: 0 });
-  const plan = buildPlan(config, state.runIndex, today);
+  const plan = buildPlan(config, state, today);
 
-  console.log(`Hoy (Hermosillo): ${today} · ventana ${plan.window.from} → ${plan.window.to}`);
+  console.log(`Hoy (Hermosillo): ${today} · ventana ${plan.window.from} → ${plan.window.to} (consulto hasta ${plan.queryEnd})`);
   console.log(`Rotación #${state.runIndex} · ${plan.chunks.length} tramos de ${config.chunkDays} días · ${plan.jobs.length} llamadas`);
+  if (state.horizon) {
+    console.log(`Sin datos de Google desde ${state.horizon.empty_from} (visto ${state.horizon.checked_on}); ${plan.skipped} llamadas omitidas.`);
+  }
 
   if (args.plan) {
-    for (const j of plan.jobs) console.log(`  ${j.route.id} ${j.nights}n  ${j.from} → ${j.to}`);
+    for (const j of plan.jobs) console.log(`  ${j.route.id} ${j.nights}n  ${j.from} → ${j.to}${j.horizonProbe ? '  (sondeo de horizonte)' : ''}`);
     return;
   }
 
@@ -364,6 +408,7 @@ async function main() {
   const calls = [];
   for (const job of plan.jobs) {
     const call = { route: job.route.id, nights: job.nights, from: job.from, to: job.to };
+    if (job.horizonProbe) call.horizon_probe = true;
     try {
       const rows = args.mock ? mockCalendar(job) : await fetchCalendar(job, config, apiKey);
       const outs = rows.map((r) => r.out).sort();
@@ -422,6 +467,7 @@ async function main() {
     }
   }
 
+  const horizon = nextHorizon(state.horizon, calls, today);
   const prevLatest = await readJson(path.join(dataDir, 'latest.json'), null);
   const all = [...merged.values()];
   const latest = {
@@ -435,12 +481,15 @@ async function main() {
       'Precio más barato del calendario de Google Flights para esa combinación de fechas, solo Aeroméxico. ' +
       'Suele ser la tarifa más básica, SIN maleta documentada.',
     window: plan.window,
+    query_until: plan.queryEnd,
+    google_no_data_from: horizon?.empty_from ?? null,
     max_quote_age_days: config.maxQuoteAgeDays,
     snapshots_used: files.map((f) => f.slice(0, 10)),
     last_run: {
       date: today,
       run_index: state.runIndex,
       calls: calls.length,
+      skipped_beyond_horizon: plan.skipped,
       failed,
       warnings: calls.filter((c) => c.warning).map((c) => `${c.route} ${c.nights}n: ${c.warning}`),
       errors: calls.filter((c) => c.error).map((c) => `${c.route} ${c.nights}n ${c.from}→${c.to}: ${c.error}`),
@@ -459,7 +508,11 @@ async function main() {
     ),
   };
   await writeJson(path.join(dataDir, 'latest.json'), latest);
-  await writeJson(path.join(dataDir, 'state.json'), { runIndex: state.runIndex + 1, last_run: today });
+  await writeJson(path.join(dataDir, 'state.json'), {
+    runIndex: state.runIndex + 1,
+    last_run: today,
+    ...(horizon ? { horizon } : {}),
+  });
 
   for (const r of latest.routes) {
     const b = r.best_of_year;

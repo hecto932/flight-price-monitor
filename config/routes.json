@@ -5,6 +5,8 @@
   "airline": "AM",
   "windowMonths": 12,
   "chunkDays": 92,
+  "horizonDays": 330,
+  "horizonRecheckDays": 7,
   "maxQuoteAgeDays": 10,
   "maxCallsPerRun": 26,
   "priceFloor": 500,

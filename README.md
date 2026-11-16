@@ -39,6 +39,19 @@ Con la config actual: (2 + 2 + 2) × 4 tramos = **24 llamadas**.
 `npm run plan` muestra las llamadas exactas sin gastar búsquedas. El colector se detiene si el plan rebasa
 `maxCallsPerRun` o si SerpApi reporta menos búsquedas restantes que las necesarias.
 
+### Horizonte de Google Flights
+
+Google solo publica precios unos 9 meses hacia adelante. En la primera corrida (15 nov 2026) el tramo que
+empezaba el 19 ago 2027 regresó vacío en las 6 llamadas. El colector:
+
+- nunca consulta más allá de `horizonDays` (330 días);
+- si un tramo regresa vacío para **todas** las rutas, lo guarda en `data/state.json` (`horizon.empty_from`)
+  y deja de consultarlo;
+- cada `horizonRecheckDays` (7) gasta **una** búsqueda para ver si ya hay datos ahí; si los hay, lo reanuda.
+
+`latest.json` lo refleja en `google_no_data_from`, `routes[].data_until` y `last_run.skipped_beyond_horizon`.
+Con esto, una corrida normal gasta 18 búsquedas (+1 de sondeo por semana): unas 165 al mes en la opción A.
+
 ### Ajustar `chunkDays` (hazlo una vez)
 
 No está documentado cuántos días cubre una sola llamada. Para medirlo con **1 búsqueda**:
