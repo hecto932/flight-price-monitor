@@ -1,0 +1,42 @@
+{
+  "currency": "MXN",
+  "gl": "mx",
+  "hl": "es",
+  "airline": "AM",
+  "windowMonths": 12,
+  "chunkDays": 92,
+  "maxQuoteAgeDays": 10,
+  "maxCallsPerRun": 26,
+  "priceFloor": 500,
+  "priceCeiling": 80000,
+  "topPerQuarter": 10,
+  "routes": [
+    {
+      "id": "HMO-MEX",
+      "origin": "HMO",
+      "destination": "MEX",
+      "minNights": 2,
+      "maxNights": 7,
+      "durations": [2, 3, 4, 5, 6, 7],
+      "durationsPerRun": 2
+    },
+    {
+      "id": "MEX-MAD",
+      "origin": "MEX",
+      "destination": "MAD",
+      "minNights": 14,
+      "maxNights": 25,
+      "durations": [14, 18, 21, 25],
+      "durationsPerRun": 2
+    },
+    {
+      "id": "MEX-PAR",
+      "origin": "MEX",
+      "destination": "CDG",
+      "minNights": 14,
+      "maxNights": 25,
+      "durations": [14, 18, 21, 25],
+      "durationsPerRun": 2
+    }
+  ]
+}
