@@ -31,10 +31,18 @@ Node 20+, sin dependencias (solo `fetch` nativo).
 Llamadas por corrida = Σ(`durationsPerRun` de cada ruta) × número de tramos.
 Con la config actual: (2 + 2 + 2) × 4 tramos = **24 llamadas**.
 
+Con el tramo fuera del horizonte omitido (ver abajo), una corrida normal gasta **18** (3 rutas × 2 duraciones × 3 tramos),
+más ~5 sondeos de horizonte al mes.
+
 | Opción | Cron | Corridas/mes | Búsquedas/mes | Plan |
 |---|---|---|---|---|
-| **A** (actual) | `30 10 * * 1,4` (lun y jue) | ~9 | ~210 | Gratis (250) |
-| B | `30 10 * * *` (diario) | ~30 | ~720 | Starter, US$25 (1,000) |
+| **A** (actual) | `30 10 1,3,6,8,10,13,15,17,20,22,24,27,29 * *` (13 fechas fijas) | 13 (12 en feb) | ~239 | Gratis (250) |
+| B | `30 10 * * 1,4` (lun y jue) | 8–10 | ~150–185 | Gratis (250) |
+| C | `30 10 * * *` (diario) | ~30 | ~545 | Starter, US$25 (1,000) |
+
+Se usan fechas fijas y no días de la semana porque así nunca pasan de 13 corridas: con lun/mié/vie, un mes de
+31 días que empieza en lunes trae 14 corridas (~257 búsquedas) y rebasa el plan. Quedan ~11 búsquedas de margen
+para una corrida manual o un `probe`.
 
 `npm run plan` muestra las llamadas exactas sin gastar búsquedas. El colector se detiene si el plan rebasa
 `maxCallsPerRun` o si SerpApi reporta menos búsquedas restantes que las necesarias.
@@ -50,7 +58,7 @@ empezaba el 19 ago 2027 regresó vacío en las 6 llamadas. El colector:
 - cada `horizonRecheckDays` (7) gasta **una** búsqueda para ver si ya hay datos ahí; si los hay, lo reanuda.
 
 `latest.json` lo refleja en `google_no_data_from`, `routes[].data_until` y `last_run.skipped_beyond_horizon`.
-Con esto, una corrida normal gasta 18 búsquedas (+1 de sondeo por semana): unas 165 al mes en la opción A.
+Con esto, una corrida normal gasta 18 búsquedas (+1 de sondeo por semana): unas 239 al mes en la opción A.
 
 ### Ajustar `chunkDays` (hazlo una vez)
 
